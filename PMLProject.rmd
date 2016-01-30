@@ -1,0 +1,111 @@
+---
+title: "Predicting exercise technique quality through accelerometer data"
+output: html_document
+---
+
+#Executive Summary
+In this analysis, we will be considering a set of accelerometer data collected form multiple devices attached to study participants engaging in phsiscal exercise.  The exercise was supervised and coded by observers for the 'quality' or 'correctness' of the activity.
+
+Our objective is to attempt to model that observation and to develop an algorithm which can effectively predict the quality of the activity based on available accelerometer data.
+
+#Data exploration and Cleanup
+```{r echo = FALSE, include = FALSE}
+library(caret)
+library(randomForest)
+library(party)
+training<- read.csv('pml-training.csv')
+``` 
+
+The initial data set contains a large number of variables which may not be relevant to the final analysis.  To reduce the number of variables, I first looked to the relevant research on the publisher's webpage to understand the covariates in question.
+
+Of the covariates in this set, the roll, pitch, and yaw variables were all calculated by the researchers, based on the accelerometer data and are intended to effectively compact those other variables, making them effectively perfect principal components for the set.
+
+Total_acceleration for each measurement device is also a relevant measure as it complements the roll, pitch and yaw measures.
+
+Although there are a number of near-zero variance values in this data set, and many with a large majority of empty or NA, none of these values coincide with the roll, pitch, yaw, or total_accel covariates.
+
+We start out by cutting down the number of covariates to just the roll, pitch, yaw, and total_accel ones in order to limit the number of variables in the model and therefore the degree of variance.
+
+```{r}
+training <- training[,c('roll_belt','pitch_belt','yaw_belt','total_accel_belt','roll_arm','pitch_arm','yaw_arm','total_accel_arm','roll_dumbbell','pitch_dumbbell','yaw_dumbbell','total_accel_dumbbell','roll_forearm','pitch_forearm','yaw_forearm','total_accel_forearm','classe')]
+set.seed(111)
+```
+
+We now partition the data into trainnig, testing, and validation sets so that we can develop our model on the training set, validate and improve it on the testing one, and then confirm it against the validation set.
+
+```{r}
+#separate training/testing data from validation data
+inTrain <- createDataPartition(training$classe,p=0.7,list=FALSE)
+training <- training[inTrain,]
+validation <- training[-inTrain,]
+#separate training data from testing data for cross-validation
+inTrain <- createDataPartition(training$classe,p=0.7,list=FALSE)
+training <- training[inTrain,]
+testing <- training[-inTrain,]
+```
+
+#model fitting
+
+We can now proceed to fitting models to the data set.  Since the problem is a complex multivariate classification one, will will attempt to fit two models:
+
+* A Classification Tree, with bagging to enhance accuracy
+
+* A Random Forest, applying bagging to not only observations, but the covariates themselves.
+
+Because we're dealing with a fairly large data set, processing time is an important consideration in model selection, so we will track elapsed time during the fitting of each model.
+```{r}
+a <- proc.time()
+ctreeBagFit <- bag(training[,-17], 
+				   training$classe, 
+				   b=10, 
+				   bagControl = bagControl(fit = ctreeBag$fit, 
+										   predict = ctreeBag$pred, 
+										   aggregate = ctreeBag$aggregate))
+pred1 <- predict(ctreeBagFit, training)
+confusionMatrix(pred1, training$classe)
+b <- proc.time()
+ctreeBagElapsed <- b[[1]]-a[[1]]
+```
+
+The bagged classification trees execute with 96.4% acccuracy in the training set and train in only `ctreeBagElapsed` seconds user time.
+
+```{r}
+a <- proc.time()
+modFit <- randomForest(classe~.,data=training)
+b<- proc.time()
+print(modFit)
+rfElapsed <- b[[1]]-a[[1]]
+```
+
+The random forest model predicts the training set classe variable with 98.5% accuracy, but takes `rfElapsed` seconds user time to train.
+
+#model testing 
+
+We'll now apply those models to the testing set to further tune.
+
+```{r}
+pred1 <- predict(ctreeBagFit, training)
+confusionMatrix(pred1, training$classe)
+```
+The bagged classification trees maintain a 96.4% accuracy in the testing set, showing excellent performance without the need for further tuning.
+```{r}
+pred1 <- predict(modFit,testing)
+confusionMatrix(pred1,testing$classe)
+```
+
+The Random Forest accuracy actually increases to 100% on the test set; an incredible figure which may indicate some overfitting.
+
+#Out of Sample Error Estimation
+
+Since both models perform excellently, we will run them both on the validation set to get an idea of what the out of sample error rates would be.
+```{r}
+confusionMatrix(predict(ctreeBagFit, validation), validation$classe)
+confusionMatrix(predict(modFit,validation), validation$classe)
+```
+The bagged classification trees show a slightly ower accuracy rating here, which is to be expected, and indicate a potential out of sample error rate of around 4.6%.
+
+The Random Forest shows only a miniscule decline in accuracy, indicating an incredible 0.5% error rate!
+
+#Conclusion
+
+While the random forest model outperforms the bagged classification trees in the training, testing, and validation sets, its performance is significantly slower and the incredibly high accuracy ratings seem suspect for overfitting.  Both models seem appropriate to modeling this data for future purposes, with the bagged classification trees particularly recommended for cases where resources may be constrained, or the data to be evaluated is significantly larger.
